@@ -4,13 +4,25 @@ This command (`static-cache:clean`) removes **orphaned static cache files** that
 
 ### 🧨 Why this is needed
 
-Statamic’s `FileCacher` stores all cached URLs for a site in a single array, saved to Redis under a single key (statamic:static-cache:urls:<domain>). When multiple requests (e.g. page renders, cache warmers, or invalidations) happen concurrently, they may:
+Statamic’s `FileCacher` stores all cached URLs for a site in a single array, saved to Redis under a single key (`statamic:static-cache:urls:<domain>`). When multiple requests (e.g. page renders, cache warmers, or invalidations) happen concurrently, they may:
 
 - **Read the current cache index**
 - **Modify it (add/remove one URL)**
 - **Write the entire array back to Redis**
 
-Because this process is **not atomic** and uses **no locks**, one process can overwrite the changes made by another. This race condition causes certain pages to **disappear from Redis**, even though their static `.html` files remain on disk.
+Because this process is **not atomic**, changes from one process can silently overwrite others. This race condition causes certain pages to **disappear from Redis**, even though their static `.html` files remain on disk.
+
+### 🔒 What about Statamic’s built-in locks?
+
+Statamic’s static cache middleware *does* apply a **per-URL file lock** (via Symfony's `LockFactory`) during a web request. This prevents the **same URL** from being rendered by multiple requests at the same time.
+
+However, it does **not** protect the shared Redis key that holds the list of all cached URLs. This Redis write is global and unguarded, which means:
+
+- Concurrent requests to different URLs (`/about`, `/products`) are **not locked against each other**.
+- Console commands (e.g. `static:warm`, `invalidateUrl`, or queue jobs) **bypass middleware entirely**, skipping locks.
+- Any of these can cause unintentional overwrites of Redis state.
+
+> 🔁 Statamic has **mutex guard rails per page**, but not for the **global Redis index**.
 
 ### ❗ The risk
 
